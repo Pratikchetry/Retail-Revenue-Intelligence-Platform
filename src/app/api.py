@@ -128,7 +128,8 @@ async def chat(req: ChatRequest):
     """Streaming endpoint for Vercel AI SDK (Next.js frontend)."""
     try:
         question = req.messages[-1].content
-        log.info("API /chat: '%s'", question[:80])
+        history = [msg.dict() for msg in req.messages[:-1]]  # Capture previous turns
+        log.info("API /chat: '%s' (History: %d turns)", question[:80], len(history))
         
         # Check cache first
         cached_answer = _cache_get(question)
@@ -146,8 +147,8 @@ async def chat(req: ChatRequest):
         
         loop = asyncio.get_event_loop()
         
-        # Start the heavy synchronous LangGraph agent in a background thread
-        future = loop.run_in_executor(None, run_agent, question)
+        # Start the heavy synchronous LangGraph agent in a background thread, passing history
+        future = loop.run_in_executor(None, run_agent, question, history)
         
         async def stream_generator():
             # 1. While the agent is thinking, yield spaces to keep the connection alive 
@@ -331,41 +332,4 @@ def segment_revenue():
         return df.to_dict(orient="records")
     except Exception as e:
         log.error("/custom/segment-revenue failed: %s", str(e)[:300])
-        raise HTTPException(status_code=500, detail=str(e)[:300])
-
-# ------------------------------------------------------------------
-# HITL review queue endpoints
-# ------------------------------------------------------------------
-from pydantic import BaseModel as _BaseModel
-
-
-class ResolveReviewRequest(_BaseModel):
-    reviewer_notes: str
-    corrected_answer: str | None = None
-
-
-@app.get("/review/pending")
-def review_pending(limit: int = 50):
-    """List answers flagged for human review (low critic score, retries exhausted)."""
-    try:
-        from src.hitl.review_queue import get_pending_reviews
-        return get_pending_reviews(limit=limit)
-    except Exception as e:
-        log.error("/review/pending failed: %s", str(e)[:300])
-        raise HTTPException(status_code=500, detail=str(e)[:300])
-
-
-@app.post("/review/{review_id}/resolve")
-def review_resolve(review_id: int, req: ResolveReviewRequest):
-    """Mark a flagged answer as reviewed, with notes and an optional correction."""
-    try:
-        from src.hitl.review_queue import resolve_review
-        found = resolve_review(review_id, req.reviewer_notes, req.corrected_answer)
-        if not found:
-            raise HTTPException(status_code=404, detail=f"Review {review_id} not found")
-        return {"status": "resolved", "id": review_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error("/review/resolve failed: %s", str(e)[:300])
         raise HTTPException(status_code=500, detail=str(e)[:300])

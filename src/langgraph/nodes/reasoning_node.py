@@ -1,9 +1,6 @@
 """
 Phase 1 — AI Retail Intelligence Platform
 Reasoning Node.
-
-Wraps the existing BusinessReasoningAgent. Enforces the evidence hierarchy:
-SQL execution result is ground truth; knowledge base is supporting context.
 """
 
 from src.agent.business_reasoning_agent import BusinessReasoningAgent
@@ -12,13 +9,26 @@ from src.langgraph.state import AgentState
 
 log = get_logger(__name__)
 
+
 def reasoning_node(state: AgentState) -> dict:
-    """Synthesize a business answer from SQL result + context."""
+    """Synthesize a business answer from SQL result + context + history."""
     question = state["question"]
     context = state.get("context", "")
     rows = state.get("rows", "")
+    history = state.get("history", [])  # Get conversation history
 
     log.info("Reasoning for: '%s'", question[:60])
+
+    # Inject conversation history into the context so the LLM knows previous turns
+    if history:
+        history_str = "\n\nPREVIOUS CONVERSATION:\n"
+        for msg in history[-4:]:  # Keep last 4 messages to save tokens
+            role = msg.get("role", "user").capitalize()
+            content = msg.get("content", "")
+            history_str += f"{role}: {content}\n"
+        
+        # Append history to the existing context
+        context = context + history_str
 
     # Format the SQL result for the LLM
     sql_result_str = None

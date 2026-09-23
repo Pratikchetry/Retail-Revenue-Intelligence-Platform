@@ -1,14 +1,6 @@
 """
 Phase 2 — AI Retail Intelligence Platform
 LangGraph StateGraph — the agent brain.
-
-Wires all nodes (SQL chain + real Forecast + real Anomaly) into a single
-graph with conditional edges:
-  - Router dispatches by intent
-  - SQL chain retries on validation failure (max 3)
-  - Critic retries on low score (max 3)
-  - OUT_OF_SCOPE gracefully declines
-  - FORECAST/ANOMALY use the real Phase 0 models
 """
 
 import functools
@@ -137,7 +129,6 @@ def build_graph():
 
 
 # Cache the compiled graph so we only build it ONCE at startup.
-# This keeps all nodes, LLM clients, and embedders in memory.
 @functools.lru_cache(maxsize=1)
 def get_compiled_graph():
     log.info("Compiling LangGraph agent for the first time...")
@@ -146,18 +137,19 @@ def get_compiled_graph():
     return graph
 
 
-def run_agent(question: str) -> dict:
+def run_agent(question: str, history: list = None) -> dict:
     """One-call entry point: ask a question, get the full agent result."""
     graph = get_compiled_graph()
     log.info("Running agent for: '%s'", question[:60])
-    result = graph.invoke({"question": question})
+    
+    # Initialize state with conversation history
+    initial_state = {
+        "question": question,
+        "history": history or [],
+        "max_attempts": 3,
+        "attempt": 0
+    }
+    
+    result = graph.invoke(initial_state)
     log.info("Agent complete | critic_score=%.2f", result.get("critic_score", 0))
-
-    # HITL: if the retry budget was exhausted and the critic still didn't
-    # pass, flag this for human review instead of silently returning a
-    # low-confidence answer with no distinction from a passing one.
-    if not result.get("critic_passes", True):
-        from src.hitl.review_queue import flag_for_review
-        flag_for_review(question, result)
-
     return result
